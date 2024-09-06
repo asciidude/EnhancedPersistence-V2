@@ -6,14 +6,14 @@ using RDR2.Math;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
+using RDR2.Native;
 
 namespace EnhancedPersistence_V2
 {
     public class Config
     {
+        public bool TrackPedPersistence { get; set; }
         public bool TrackVehiclePersistence { get; set; }
-        public bool TrackWeaponPersistence { get; set; }
-        public bool TrackLivingHorsesPersistence { get; set; }
         public int PersistenceRange { get; set; }
         public int PersistenceRangeLivingHorses { get; set; }
         public int DeletionRangeTown { get; set; }
@@ -21,6 +21,7 @@ namespace EnhancedPersistence_V2
         public bool PersistencePauseOnFPS { get; set; }
         public int LowestFPS { get; set; }
         public bool DeleteAllPersistence { get; set; }
+        public bool EnableLogging { get; set; }
     }
 
     public struct PersistentEntity
@@ -51,7 +52,6 @@ namespace EnhancedPersistence_V2
 
     public class Client : Script
     {
-        // { id, PersistentEntity{} }
         public Dictionary<int, PersistentEntity> persistenceObject = new Dictionary<int, PersistentEntity>();
         public List<Town> towns = new List<Town>
         {
@@ -69,10 +69,11 @@ namespace EnhancedPersistence_V2
         };
 
         private Config config;
+        public Utilities utils = new Utilities();
 
         public Client()
         {
-            config = Utilities.LoadConfiguration();
+            config = utils.LoadConfiguration();
 
             if (config == null)
             {
@@ -93,7 +94,7 @@ namespace EnhancedPersistence_V2
 
             foreach (var town in towns)
             {
-                if (Utilities.IsInTown(new Vector2(Game.Player.Ped.Position.X, Game.Player.Ped.Position.Y), town))
+                if (utils.IsInTown(new Vector2(Game.Player.Ped.Position.X, Game.Player.Ped.Position.Y), town))
                 {
                     townName = town.Name;
                     break;
@@ -105,9 +106,8 @@ namespace EnhancedPersistence_V2
             }
 
             new TextElement(
-                $"Weapon persistence: {config.TrackWeaponPersistence}\n"
+                $"Ped persistence: {config.TrackPedPersistence}\n"
                 + $"Vehicle persistence: {config.TrackVehiclePersistence}\n"
-                + $"Living horse persistence: {config.TrackLivingHorsesPersistence}\n"
                 + $"Game FPS: {Game.FPS} | Limit FPS: {config.LowestFPS} | Persistence Paused: {Game.FPS < config.LowestFPS}\n"
                 + $"Town: {townName}",
                 new PointF(300f, 300f),
@@ -116,10 +116,10 @@ namespace EnhancedPersistence_V2
 
             if(config.PersistencePauseOnFPS && Game.FPS < config.LowestFPS)
             {
-                Utilities.Log("Persistence pause enabled, pausing persistence due to FPS reaching " + config.LowestFPS);
+                utils.Log($"Persistence pause enabled, pausing persistence due to FPS reaching {config.LowestFPS}");
                 if (config.DeleteAllPersistence)
                 {
-                    Utilities.Log("Persistence cleared");
+                    utils.Log("Persistence cleared");
                     persistenceObject.Clear();
                     return;
                 }
@@ -139,93 +139,133 @@ namespace EnhancedPersistence_V2
             var entitiesToRemove = new List<int>();
 
             // Handle all pedestrians
-            foreach (var ped in World.GetAllPeds())
+            if (config.TrackPedPersistence)
             {
-                distanceToPlayer = Vector3.Distance(playerPos, ped.Position);
-
-                if (distanceToPlayer <= config.PersistenceRange)
+                foreach (var ped in World.GetAllPeds())
                 {
-                    // Check if the ped is already in the persistenceObject
-                    var existingEntity = persistenceObject.Values
-                    .FirstOrDefault(e => e.Entity.Handle == ped.Handle);
+                    distanceToPlayer = Vector3.Distance(playerPos, ped.Position);
 
-                    if (existingEntity.Entity != null && existingEntity.Entity.Handle != 0)
+                    if (distanceToPlayer <= config.PersistenceRange)
                     {
-                        Utilities.Log("Updating existing entity\nPosition: " + ped.Position + "\nHash: " + ped.GetHashCode());
+                        // Check if the ped is already in the persistenceObject
+                        var existingEntity = persistenceObject.Values
+                        .FirstOrDefault(e => e.Entity.Handle == ped.Handle);
 
-                        // Update the existing entity
-                        existingEntity.Position = ped.Position;
-                        existingEntity.IsSpawned = ped.Exists();
-                        existingEntity.EntityHealth = ped.Health;
-                        existingEntity.SpawnedInTown = IsInSameTown(playerPos, existingEntity);
-
-                        // Update the dictionary with the modified entity
-                        persistenceObject[existingEntity.Entity.Handle] = existingEntity;
-                    }
-                    else
-                    {
-                        Utilities.Log("Adding entity to persistence object");
-
-                        // Add a new entity to persistenceObject
-                        var newPersistentEntity = new PersistentEntity
+                        if (existingEntity.Entity != null && existingEntity.Entity.Handle != 0)
                         {
-                            Position = ped.Position,
-                            Entity = ped,
-                            IsSpawned = ped.Exists(),
-                            SpawnedInTown = false,
-                            EntityHealth = ped.Health,
-                            Hash = ped.GetHashCode(),
-                            EntityType = 1 // Pedestrian
-                        };
+                            bool sameTown = IsInSameTown(playerPos, existingEntity);
 
-                        if (newPersistentEntity.Entity == null)
-                        {
-                            throw new InvalidOperationException("Entity reference is not set.");
+                            utils.Log(
+                                $"Updating existing ped: {ped.GetHashCode()}"
+                                + $" | Position: {ped.Position}"
+                                + $" | Ped Health: {ped.Health}"
+                                + $" | Spawned In Town: {sameTown}"
+                            );
+
+                            // Update the existing entity
+                            existingEntity.Position = ped.Position;
+                            existingEntity.IsSpawned = ped.Exists();
+                            existingEntity.EntityHealth = ped.Health;
+                            existingEntity.SpawnedInTown = sameTown;
+
+                            // Update the dictionary with the modified entity
+                            persistenceObject[existingEntity.Entity.Handle] = existingEntity;
                         }
+                        else
+                        {
+                            utils.Log(
+                                $"Adding ped to persistence object: {ped.GetHashCode()}"
+                                + $" | Position: {ped.Position}"
+                                + $" | Ped Health: {ped.Health}"
+                                + $" | Spawned In Town: false - fixed in updater"
+                            );
 
-                        // Add the new entity to the persistenceObject dictionary
-                        persistenceObject[ped.Handle] = newPersistentEntity;
+                            // Add a new entity to persistenceObject
+                            var newPersistentEntity = new PersistentEntity
+                            {
+                                Position = ped.Position,
+                                Entity = ped,
+                                IsSpawned = ped.Exists(),
+                                SpawnedInTown = false,
+                                EntityHealth = ped.Health,
+                                Hash = ped.GetHashCode(),
+                                EntityType = 1 // Pedestrian
+                            };
+
+                            if (newPersistentEntity.Entity == null)
+                            {
+                                throw new InvalidOperationException("Entity reference is not set (ped).");
+                            }
+
+                            // Add the new entity to the persistenceObject dictionary
+                            persistenceObject[ped.Handle] = newPersistentEntity;
+                        }
                     }
                 }
             }
 
             // Handle all vehicles
-            foreach (var vehicle in World.GetAllVehicles())
+            if (config.TrackVehiclePersistence)
             {
-                distanceToPlayer = Vector3.Distance(playerPos, vehicle.Position);
-
-                if (distanceToPlayer <= config.PersistenceRange)
+                foreach (var vehicle in World.GetAllVehicles())
                 {
-                    // Check if the vehicle is already in the persistenceObject
-                    PersistentEntity existingEntity = persistenceObject.Values
-                                     .FirstOrDefault(e => e.Entity.Handle == vehicle.Handle);
+                    distanceToPlayer = Vector3.Distance(playerPos, vehicle.Position);
 
-                    if (existingEntity.Entity != null)
+                    if (distanceToPlayer <= config.PersistenceRange)
                     {
-                        // Update the existing entity
-                        existingEntity.Position = vehicle.Position;
-                        existingEntity.IsSpawned = vehicle.Exists();
-                        existingEntity.SpawnedInTown = IsInSameTown(playerPos, existingEntity);
+                        // Check if the vehicle is already in the persistenceObject
+                        PersistentEntity existingEntity = persistenceObject.Values
+                                         .FirstOrDefault(e => e.Entity.Handle == vehicle.Handle);
 
-                        // Update the dictionary with the modified entity
-                        persistenceObject[existingEntity.Entity.Handle] = existingEntity;
-                    }
-                    else
-                    {
-                        // Add a new entity to persistenceObject
-                        var newPersistentEntity = new PersistentEntity
+                        if (existingEntity.Entity != null)
                         {
-                            Position = vehicle.Position,
-                            Entity = vehicle,
-                            IsSpawned = vehicle.Exists(),
-                            EntityHealth = 0,
-                            SpawnedInTown = false,
-                            Hash = vehicle.GetHashCode(),
-                            EntityType = 2 // Vehicle
-                        };
+                            bool sameTown = IsInSameTown(playerPos, existingEntity);
 
-                        // Add the new entity to the persistenceObject dictionary
-                        persistenceObject[vehicle.Handle] = newPersistentEntity;
+                            utils.Log(
+                                $"Updating existing vehicle: {vehicle.GetHashCode()}"
+                                + $" | Position: {vehicle.Position}"
+                                + $" | Ped Health: {vehicle.Health}"
+                                + $" | Spawned In Town: {sameTown}"
+                            );
+
+                            // Update the existing entity
+                            existingEntity.Position = vehicle.Position;
+                            existingEntity.IsSpawned = vehicle.Exists();
+                            existingEntity.EntityHealth = vehicle.Health;
+                            existingEntity.SpawnedInTown = sameTown;
+
+                            // Update the dictionary with the modified entity
+                            persistenceObject[existingEntity.Entity.Handle] = existingEntity;
+                        }
+                        else
+                        {
+                            utils.Log(
+                                $"Adding vehicle to persistence object: {vehicle.GetHashCode()}"
+                                + $" | Position: {vehicle.Position}"
+                                + $" | Ped Health: {vehicle.Health}"
+                                + $" | Spawned In Town: false - fixed in updater"
+                            );
+
+                            // Add a new entity to persistenceObject
+                            var newPersistentEntity = new PersistentEntity
+                            {
+                                Position = vehicle.Position,
+                                Entity = vehicle,
+                                IsSpawned = vehicle.Exists(),
+                                EntityHealth = vehicle.Health,
+                                SpawnedInTown = false,
+                                Hash = vehicle.GetHashCode(),
+                                EntityType = 2 // Vehicle
+                            };
+
+                            if (newPersistentEntity.Entity == null)
+                            {
+                                throw new InvalidOperationException("Entity reference is not set (vehicle).");
+                            }
+
+                            // Add the new entity to the persistenceObject dictionary
+                            persistenceObject[vehicle.Handle] = newPersistentEntity;
+                        }
                     }
                 }
             }
@@ -238,10 +278,10 @@ namespace EnhancedPersistence_V2
                 PersistentEntity entity = ekv.Value;
                 distanceToPlayer = Vector3.Distance(playerPos, entity.Position);
 
-                Utilities.Log($"Checking entity at distance: {distanceToPlayer} | Entity spawned: {entity.IsSpawned}");
+                utils.Log($"Checking entity: {entity.Hash} | Distance: {distanceToPlayer} | Entity spawned: {entity.IsSpawned}");
                 if (distanceToPlayer <= config.PersistenceRange && !entity.IsSpawned)
                 {
-                    Utilities.Log($"Spawning entity {entity.Hash} at {entity.Position} (Type: {entity.EntityType})");
+                    utils.Log($"Spawning entity {entity.Hash} at {entity.Position} (Type: {entity.EntityType})");
 
                     if (entity.EntityType == 1) // Pedestrian
                     {
@@ -249,8 +289,8 @@ namespace EnhancedPersistence_V2
 
                         if (spawnedEntity == null)
                         {
-                            Utilities.Log($"Failed to create ped with hash {entity.Hash} at {entity.Position}");
-                            Utilities.Log("Entity scheduled for persistence deletion: " + entity.Hash);
+                            utils.Log($"Failed to create ped with hash {entity.Hash} at {entity.Position}");
+                            utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
                             entitiesToRemove.Add(entity.Hash);
                             continue;
                         }
@@ -265,12 +305,13 @@ namespace EnhancedPersistence_V2
                 }
                 else if (distanceToPlayer > config.PersistenceRange && entity.IsSpawned)
                 {
-                    Utilities.Log("Removing entity due to distance beyond PersistenceRange");
+                    utils.Log($"Removing entity due to distance beyond PersistenceRange: {entity.Hash}");
 
                     entity.Entity.Delete();
                     entity.IsSpawned = entity.Entity.Exists();
                     persistenceObject[ekv.Key] = entity;
-                    Utilities.Log("Entity removed");
+
+                    utils.Log($"Entity removed from game world: {entity.Hash}");
                     continue;
                 }
                 else if (
@@ -278,7 +319,7 @@ namespace EnhancedPersistence_V2
                     || (distanceToPlayer >= config.DeletionRangeWilderness && !entity.SpawnedInTown)
                     )
                 {
-                    Utilities.Log("Entity scheduled for persistence deletion: " + entity.Hash);
+                    utils.Log($"Entity scheduled for persistence deletion: {entity.Hash}");
 
                     if (entity.Entity.Exists())
                     {
@@ -304,7 +345,7 @@ namespace EnhancedPersistence_V2
             
             foreach (var town in towns)
             {
-                if (Utilities.IsInTown(new Vector2(position.X, position.Y), town))
+                if (utils.IsInTown(new Vector2(position.X, position.Y), town))
                 {
                     townName = town.Name;
                     break;
