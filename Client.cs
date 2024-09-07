@@ -31,7 +31,7 @@ namespace EnhancedPersistence_V2
         public bool IsSpawned { get; set; }     // Flag indicating whether the entity is spawned
         public bool SpawnedInTown { get; set; } // Flag indicating whether the entity spawned in a town
         public string TownName { get; set; }    // The name of the town the entity spawned in
-        public int Hash { get; set; }           // Model hash for the entity
+        public uint Hash { get; set; }          // Model hash for the entity
         public int EntityType { get; set; }     // Type of entity (1: Pedestrian, 2: Vehicle)
         public int EntityHealth {  get; set; }  // Flag indicating whether the entity is dead
     };
@@ -52,7 +52,7 @@ namespace EnhancedPersistence_V2
 
     public class Client : Script
     {
-        public Dictionary<int, PersistentEntity> persistenceObject = new Dictionary<int, PersistentEntity>();
+        public Dictionary<uint, PersistentEntity> persistenceObject = new Dictionary<uint, PersistentEntity>();
         public List<Town> towns = new List<Town>
         {
             new Town("Valentine", new Vector2(-294.967f, 761.373f), 500.0f),
@@ -111,14 +111,13 @@ namespace EnhancedPersistence_V2
             Vector3 playerPos = Game.Player.Ped.Position;
             float distanceToPlayer;
 
-            // Create a temporary list to hold entities to be removed
-            var entitiesToRemove = new List<int>();
-
             // Handle all pedestrians
             if (config.TrackPedPersistence)
             {
                 foreach (var ped in World.GetAllPeds())
                 {
+                    if (ped.IsPlayer) continue;
+
                     distanceToPlayer = Vector3.Distance(playerPos, ped.Position);
 
                     if (distanceToPlayer <= config.PersistenceRange)
@@ -145,7 +144,7 @@ namespace EnhancedPersistence_V2
                             existingEntity.SpawnedInTown = sameTown;
 
                             // Update the dictionary with the modified entity
-                            persistenceObject[existingEntity.Entity.Handle] = existingEntity;
+                            persistenceObject[(uint)existingEntity.Entity.Handle] = existingEntity;
                         }
                         else
                         {
@@ -164,7 +163,7 @@ namespace EnhancedPersistence_V2
                                 IsSpawned = ped.Exists(),
                                 SpawnedInTown = false,
                                 EntityHealth = ped.Health,
-                                Hash = ped.GetHashCode(),
+                                Hash = (uint)ped.GetHashCode(),
                                 EntityType = 1 // Pedestrian
                             };
 
@@ -174,7 +173,7 @@ namespace EnhancedPersistence_V2
                             }
 
                             // Add the new entity to the persistenceObject dictionary
-                            persistenceObject[ped.Handle] = newPersistentEntity;
+                            persistenceObject[(uint)ped.Handle] = newPersistentEntity;
                         }
                     }
                 }
@@ -211,7 +210,7 @@ namespace EnhancedPersistence_V2
                             existingEntity.SpawnedInTown = sameTown;
 
                             // Update the dictionary with the modified entity
-                            persistenceObject[existingEntity.Entity.Handle] = existingEntity;
+                            persistenceObject[(uint)existingEntity.Entity.Handle] = existingEntity;
                         }
                         else
                         {
@@ -230,7 +229,7 @@ namespace EnhancedPersistence_V2
                                 IsSpawned = vehicle.Exists(),
                                 EntityHealth = vehicle.Health,
                                 SpawnedInTown = false,
-                                Hash = vehicle.GetHashCode(),
+                                Hash = (uint)vehicle.GetHashCode(),
                                 EntityType = 2 // Vehicle
                             };
 
@@ -240,85 +239,112 @@ namespace EnhancedPersistence_V2
                             }
 
                             // Add the new entity to the persistenceObject dictionary
-                            persistenceObject[vehicle.Handle] = newPersistentEntity;
+                            persistenceObject[(uint)vehicle.Handle] = newPersistentEntity;
                         }
                     }
                 }
             }
 
             // Spawn entities if they are within range, add them to key deletion otherwise
-            List<int> keyDeletionList = new List<int>();
+            List<uint> keyDeletionList = new List<uint>();
 
             foreach (var ekv in persistenceObject.ToList())
             {
                 PersistentEntity entity = ekv.Value;
                 distanceToPlayer = Vector3.Distance(playerPos, entity.Position);
+                int hashCode = entity.Entity.GetHashCode();
 
-                utils.Log($"Checking entity: {entity.Hash} | Distance: {distanceToPlayer} | Entity spawned: {entity.IsSpawned}");
+                utils.Log($"Checking entity: {hashCode} | Distance: {distanceToPlayer} | Entity spawned: {entity.IsSpawned}");
                 if (distanceToPlayer <= config.PersistenceRange && !entity.IsSpawned)
                 {
-                    utils.Log($"Spawning entity {entity.Hash} at {entity.Position} (Type: {entity.EntityType})");
+                    utils.Log($"Spawning entity {hashCode} at {entity.Position} (Type: {entity.EntityType})");
 
                     if (entity.EntityType == 1) // Pedestrian
                     {
-                        Ped ped = World.CreatePed((PedHash)entity.Hash, entity.Position);
-
-                        if (!Enum.IsDefined(typeof(PedHash), entity.Hash))
+                        try
                         {
-                            utils.Log($"Invalid ped hash {entity.Hash}");
-                            utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
-                            entitiesToRemove.Add(entity.Hash);
-                            continue;
-                        }
+                            PedHash pedHash = utils.GetPedHashFromNumeric(entity.Entity.GetHashCode());
 
-                        if (ped == null)
+                            if (!Enum.IsDefined(typeof(PedHash), pedHash))
+                            {
+                                utils.Log($"Invalid ped hash {hashCode}");
+                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                keyDeletionList.Add(entity.Hash);
+                                continue;
+                            }
+                            
+                            Ped ped = World.CreatePed(pedHash, entity.Position);
+
+                            if (ped == null)
+                            {
+                                utils.Log($"Failed to create ped with hash {hashCode} at {entity.Position}");
+                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                keyDeletionList.Add(entity.Hash);
+                                continue;
+                            }
+
+                            ped.Health = entity.EntityHealth;
+
+                            entity.IsSpawned = ped.Exists();
+                            persistenceObject[ekv.Key] = entity;
+                        }
+                        catch (Exception e)
                         {
-                            utils.Log($"Failed to create ped with hash {entity.Hash} at {entity.Position}");
-                            utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
-                            entitiesToRemove.Add(entity.Hash);
-                            continue;
+                            utils.Log($"Exception caught while creating ped (Hash: {hashCode}):\n" + e.Message);
                         }
-
-                        ped.Health = entity.EntityHealth;
-
-                        entity.IsSpawned = ped.Exists();
-                        persistenceObject[ekv.Key] = entity;
                     }
                     else if (entity.EntityType == 2) // Vehicle
                     {
-                        Vehicle vehicle = World.CreateVehicle((VehicleHash)entity.Hash, entity.Position);
-
-                        if (vehicle == null)
+                        try
                         {
-                            utils.Log($"Failed to create vehicle with hash {entity.Hash} at {entity.Position}");
-                            utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
-                            entitiesToRemove.Add(entity.Hash);
-                            continue;
+                            VehicleHash vehicleHash = utils.GetVehicleHashFromNumeric(entity.Entity.GetHashCode());
+
+                            Vehicle vehicle = World.CreateVehicle((VehicleHash)hashCode, entity.Position);
+
+                            if (!Enum.IsDefined(typeof(VehicleHash), (VehicleHash)hashCode))
+                            {
+                                utils.Log($"Invalid vehicle hash {hashCode}");
+                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                keyDeletionList.Add(entity.Hash);
+                                continue;
+                            }
+
+                            if (vehicle == null)
+                            {
+                                utils.Log($"Failed to create vehicle with hash {hashCode} at {entity.Position}");
+                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                keyDeletionList.Add(entity.Hash);
+                                continue;
+                            }
+
+                            vehicle.Health = entity.EntityHealth;
+
+                            entity.IsSpawned = vehicle.Exists();
+                            persistenceObject[ekv.Key] = entity;
                         }
-
-                        vehicle.Health = entity.EntityHealth;
-
-                        entity.IsSpawned = vehicle.Exists();
-                        persistenceObject[ekv.Key] = entity;
+                        catch (Exception e)
+                        {
+                            utils.Log($"Exception caught while creating vehicle (Hash: {hashCode}):\n" + e.Message);
+                        }
                     }
                     else
                     {
-                        utils.Log($"Unrecognized entity type for {entity.Hash} (Type: {entity.EntityType}");
-                        utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
-                        entitiesToRemove.Add(entity.Hash);
+                        utils.Log($"Unrecognized entity type for {hashCode} (Type: {entity.EntityType}");
+                        utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                        keyDeletionList.Add(entity.Hash);
                     }
 
                     continue;
                 }
                 else if (distanceToPlayer > config.PersistenceRange && entity.IsSpawned)
                 {
-                    utils.Log($"Removing entity due to distance beyond PersistenceRange: {entity.Hash}");
+                    utils.Log($"Removing entity due to distance beyond PersistenceRange: {hashCode}");
 
                     entity.Entity.Delete();
                     entity.IsSpawned = entity.Entity.Exists();
                     persistenceObject[ekv.Key] = entity;
 
-                    utils.Log($"Entity removed from game world: {entity.Hash}");
+                    utils.Log($"Entity removed from game world: {hashCode}");
                     continue;
                 }
                 else if (
@@ -326,7 +352,7 @@ namespace EnhancedPersistence_V2
                     || (distanceToPlayer >= config.DeletionRangeWilderness && !entity.SpawnedInTown)
                     )
                 {
-                    utils.Log($"Entity scheduled for persistence deletion: {entity.Hash}");
+                    utils.Log($"Entity scheduled for persistence deletion: {hashCode}");
 
                     if (entity.Entity.Exists())
                     {
