@@ -90,30 +90,6 @@ namespace EnhancedPersistence_V2
         {
             Wait(1000);
 
-            string townName = "";
-
-            foreach (var town in towns)
-            {
-                if (utils.IsInTown(new Vector2(Game.Player.Ped.Position.X, Game.Player.Ped.Position.Y), town))
-                {
-                    townName = town.Name;
-                    break;
-                }
-                else
-                {
-                    townName = "wilderness";
-                }
-            }
-
-            new TextElement(
-                $"Ped persistence: {config.TrackPedPersistence}\n"
-                + $"Vehicle persistence: {config.TrackVehiclePersistence}\n"
-                + $"Game FPS: {Game.FPS} | Limit FPS: {config.LowestFPS} | Persistence Paused: {Game.FPS < config.LowestFPS}\n"
-                + $"Town: {townName}",
-                new PointF(300f, 300f),
-                0.3f
-            ).Draw();
-
             if(config.PersistencePauseOnFPS && Game.FPS < config.LowestFPS)
             {
                 utils.Log($"Persistence pause enabled, pausing persistence due to FPS reaching {config.LowestFPS}");
@@ -285,9 +261,17 @@ namespace EnhancedPersistence_V2
 
                     if (entity.EntityType == 1) // Pedestrian
                     {
-                        Entity spawnedEntity = World.CreatePed((PedHash)entity.Hash, entity.Position);
+                        Ped ped = World.CreatePed((PedHash)entity.Hash, entity.Position);
 
-                        if (spawnedEntity == null)
+                        if (!Enum.IsDefined(typeof(PedHash), entity.Hash))
+                        {
+                            utils.Log($"Invalid ped hash {entity.Hash}");
+                            utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
+                            entitiesToRemove.Add(entity.Hash);
+                            continue;
+                        }
+
+                        if (ped == null)
                         {
                             utils.Log($"Failed to create ped with hash {entity.Hash} at {entity.Position}");
                             utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
@@ -295,10 +279,33 @@ namespace EnhancedPersistence_V2
                             continue;
                         }
 
-                        spawnedEntity.Health = entity.EntityHealth;
+                        ped.Health = entity.EntityHealth;
 
-                        entity.IsSpawned = spawnedEntity.Exists();
+                        entity.IsSpawned = ped.Exists();
                         persistenceObject[ekv.Key] = entity;
+                    }
+                    else if (entity.EntityType == 2) // Vehicle
+                    {
+                        Vehicle vehicle = World.CreateVehicle((VehicleHash)entity.Hash, entity.Position);
+
+                        if (vehicle == null)
+                        {
+                            utils.Log($"Failed to create vehicle with hash {entity.Hash} at {entity.Position}");
+                            utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
+                            entitiesToRemove.Add(entity.Hash);
+                            continue;
+                        }
+
+                        vehicle.Health = entity.EntityHealth;
+
+                        entity.IsSpawned = vehicle.Exists();
+                        persistenceObject[ekv.Key] = entity;
+                    }
+                    else
+                    {
+                        utils.Log($"Unrecognized entity type for {entity.Hash} (Type: {entity.EntityType}");
+                        utils.Log($"Entity scheduled for persistence deletion: {entity.Hash} ");
+                        entitiesToRemove.Add(entity.Hash);
                     }
 
                     continue;
