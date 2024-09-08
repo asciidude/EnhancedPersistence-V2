@@ -1,12 +1,10 @@
 ﻿using System;
-using System.Drawing;
 using RDR2;
-using RDR2.UI;
 using RDR2.Math;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
-using RDR2.Native;
+using System.Security.Policy;
 
 namespace EnhancedPersistence_V2
 {
@@ -119,6 +117,7 @@ namespace EnhancedPersistence_V2
                     if (ped.IsPlayer) continue;
 
                     distanceToPlayer = Vector3.Distance(playerPos, ped.Position);
+                    PedHash hashCode = (PedHash)ped.GetHashCode();
 
                     if (distanceToPlayer <= config.PersistenceRange)
                     {
@@ -131,7 +130,7 @@ namespace EnhancedPersistence_V2
                             bool sameTown = IsInSameTown(playerPos, existingEntity);
 
                             utils.Log(
-                                $"Updating existing ped: {ped.GetHashCode()}"
+                                $"Updating existing ped: {hashCode}"
                                 + $" | Position: {ped.Position}"
                                 + $" | Ped Health: {ped.Health}"
                                 + $" | Spawned In Town: {sameTown}"
@@ -149,7 +148,7 @@ namespace EnhancedPersistence_V2
                         else
                         {
                             utils.Log(
-                                $"Adding ped to persistence object: {ped.GetHashCode()}"
+                                $"Adding ped to persistence object: {hashCode}"
                                 + $" | Position: {ped.Position}"
                                 + $" | Ped Health: {ped.Health}"
                                 + $" | Spawned In Town: false - fixed in updater"
@@ -163,7 +162,7 @@ namespace EnhancedPersistence_V2
                                 IsSpawned = ped.Exists(),
                                 SpawnedInTown = false,
                                 EntityHealth = ped.Health,
-                                Hash = (uint)ped.GetHashCode(),
+                                Hash = (uint)hashCode,
                                 EntityType = 1 // Pedestrian
                             };
 
@@ -252,33 +251,34 @@ namespace EnhancedPersistence_V2
             {
                 PersistentEntity entity = ekv.Value;
                 distanceToPlayer = Vector3.Distance(playerPos, entity.Position);
-                int hashCode = entity.Entity.GetHashCode();
+                int hashCode = entity.GetHashCode();
 
-                utils.Log($"Checking entity: {hashCode} | Distance: {distanceToPlayer} | Entity spawned: {entity.IsSpawned}");
                 if (distanceToPlayer <= config.PersistenceRange && !entity.IsSpawned)
                 {
                     utils.Log($"Spawning entity {hashCode} at {entity.Position} (Type: {entity.EntityType})");
 
                     if (entity.EntityType == 1) // Pedestrian
                     {
+                        PedHash pedHash = (PedHash)hashCode;
+
                         try
                         {
-                            PedHash pedHash = utils.GetPedHashFromNumeric(entity.Entity.GetHashCode());
-
+                            /*
                             if (!Enum.IsDefined(typeof(PedHash), pedHash))
                             {
-                                utils.Log($"Invalid ped hash {hashCode}");
-                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                utils.Log($"Invalid ped hash {pedHash}");
+                                utils.Log($"Entity scheduled for persistence deletion: {pedHash}");
                                 keyDeletionList.Add(entity.Hash);
                                 continue;
                             }
-                            
+                            */
+
                             Ped ped = World.CreatePed(pedHash, entity.Position);
 
                             if (ped == null)
                             {
-                                utils.Log($"Failed to create ped with hash {hashCode} at {entity.Position}");
-                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                utils.Log($"Failed to create ped with hash {pedHash} at {entity.Position}");
+                                utils.Log($"Entity scheduled for persistence deletion: {pedHash}");
                                 keyDeletionList.Add(entity.Hash);
                                 continue;
                             }
@@ -290,29 +290,29 @@ namespace EnhancedPersistence_V2
                         }
                         catch (Exception e)
                         {
-                            utils.Log($"Exception caught while creating ped (Hash: {hashCode}):\n" + e.Message);
+                            utils.Log($"Exception caught while creating ped (Hash: {pedHash}):\n" + e.Message);
                         }
                     }
                     else if (entity.EntityType == 2) // Vehicle
                     {
+                        VehicleHash vehicleHash = (VehicleHash)hashCode;
+
                         try
                         {
-                            VehicleHash vehicleHash = utils.GetVehicleHashFromNumeric(entity.Entity.GetHashCode());
+                            Vehicle vehicle = World.CreateVehicle(vehicleHash, entity.Position);
 
-                            Vehicle vehicle = World.CreateVehicle((VehicleHash)hashCode, entity.Position);
-
-                            if (!Enum.IsDefined(typeof(VehicleHash), (VehicleHash)hashCode))
+                            if (!Enum.IsDefined(typeof(VehicleHash), vehicleHash))
                             {
-                                utils.Log($"Invalid vehicle hash {hashCode}");
-                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                utils.Log($"Invalid vehicle hash {vehicleHash}");
+                                utils.Log($"Entity scheduled for persistence deletion: {vehicleHash}");
                                 keyDeletionList.Add(entity.Hash);
                                 continue;
                             }
 
                             if (vehicle == null)
                             {
-                                utils.Log($"Failed to create vehicle with hash {hashCode} at {entity.Position}");
-                                utils.Log($"Entity scheduled for persistence deletion: {hashCode} ");
+                                utils.Log($"Failed to create vehicle with hash {vehicleHash} at {entity.Position}");
+                                utils.Log($"Entity scheduled for persistence deletion: {vehicleHash}");
                                 keyDeletionList.Add(entity.Hash);
                                 continue;
                             }
@@ -324,7 +324,7 @@ namespace EnhancedPersistence_V2
                         }
                         catch (Exception e)
                         {
-                            utils.Log($"Exception caught while creating vehicle (Hash: {hashCode}):\n" + e.Message);
+                            utils.Log($"Exception caught while creating vehicle (Hash: {vehicleHash}):\n" + e.Message);
                         }
                     }
                     else
@@ -364,12 +364,13 @@ namespace EnhancedPersistence_V2
                 }
             }
 
-            foreach (var key in keyDeletionList)
+            for (int i = keyDeletionList.Count - 1; i >= 0; i--)
             {
+                uint key = keyDeletionList[i];
                 persistenceObject.Remove(key);
+                utils.Log($"Entity removed from persistence object: {key}");
+                keyDeletionList.RemoveAt(i);
             }
-
-            keyDeletionList.Clear();
         }
 
     private bool IsInSameTown(Vector3 position, PersistentEntity entity)
