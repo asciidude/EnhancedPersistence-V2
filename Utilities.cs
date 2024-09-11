@@ -24,6 +24,7 @@ namespace EnhancedPersistence_V2
                     {
                         writer.WriteLine($"{DateTime.Now}: {message}");
                         Console.WriteLine(message);
+                        writer.Close();
                     }
                 }
                 catch (Exception ex)
@@ -70,32 +71,6 @@ namespace EnhancedPersistence_V2
         public bool IsInTown(Vector2 position, Town town)
         {
             return Vector2.Distance(town.Center, position) < town.Radius;
-        }
-
-        public PedHash GetPedHashFromNumeric(int numericHash)
-        {
-            foreach (PedHash hash in Enum.GetValues(typeof(PedHash)))
-            {
-                if ((int)hash == numericHash)
-                {
-                    return hash;
-                }
-            }
-
-            return 0;
-        }
-
-        public VehicleHash GetVehicleHashFromNumeric(int numericHash)
-        {
-            foreach (VehicleHash hash in Enum.GetValues(typeof(VehicleHash)))
-            {
-                if ((int)hash == numericHash)
-                {
-                    return hash;
-                }
-            }
-
-            return 0;
         }
     }
 }
